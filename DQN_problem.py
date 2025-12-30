@@ -33,10 +33,14 @@ env.reset()
 
 # Parameters
 N_episodes = 100                             # Number of episodes
-discount_factor = 0.95                       # Value of the discount factor
+discount_factor = 0.95                       # Value of the discount factor (GAMMA)
 n_ep_running_average = 50                    # Running average of 50 episodes
 n_actions = env.action_space.n               # Number of available actions
 dim_state = len(env.observation_space.high)  # State dimensionality
+
+EPSILON = 0.1
+BATCH_SIZE = 32
+LR = 0.9
 
 # We will use these variables to compute the average episodic reward and
 # the average number of steps per episode
@@ -45,6 +49,109 @@ episode_number_of_steps = []   # this list contains the number of steps per epis
 
 # Random agent initialization
 agent = RandomAgent(n_actions)
+
+# ReplayBuffer
+
+class Experience:
+    def __init__(self,state, action,reward,next_state,done):
+        self.state = state 
+        self.action = action 
+        self.reward = reward
+        self.next_state = next_state
+        self.done = done 
+
+class ReplayBuffer:
+    def __init__(self,max_len=1000):
+        self.buffer = []
+        self.max_len = max_len
+    
+    def append(self, elem):
+        assert (type(elem) is Experience)
+        self.buffer.append(elem)
+        if len(self.buffer) > self.max_len:
+            self.remove()
+    
+    def remove(self):
+        self.buffer.pop(0)
+    
+    def __len__(self):
+        return len(self.buffer)
+    
+    def sample(self, count):
+        batch = np.random.choice(a=self.buffer,size=count,replace=False)
+        states_l = [x.state for x in batch]
+        actions_l = [x.action for x in batch]
+        rewards_l = [x.reward for x in batch]
+        next_states_l = [x.next_state for x in batch]
+        dones_l = [x.done for x in batch]
+        states = torch.tensor(states_l, dtype=torch.float64)
+        actions = torch.tensor(actions_l, dtype=torch.float64).unsqueeze(1)
+        rewards = torch.tensor(rewards_l, dtype=torch.float64)
+        next_states = torch.tensor(next_states_l, dtype=torch.float64)
+        dones = torch.tensor(dones_l, dtype=torch.float64)
+
+        return states, actions, rewards, next_states, dones
+
+
+class Net(torch.nn.Module):
+    def __init__(self, observation_count, action_count, dim2):
+        super().__init__()
+        self.layer_in = torch.nn.Linear(in_features=observation_count, out_features=dim2)
+        self.layer_act = torch.nn.Linear(in_features=dim2,out_features=dim2)
+        self.layer_out = torch.nn.Linear(in_features=dim2 ,out_features=action_count)
+    
+    def forward(self,x):
+        # print("x type", type(x))
+        # print("x.dtype", x.dtype)
+        # x = torch.tensor(x,dtype=torch.float64)
+        x = x.to(torch.float64)
+        relu = torch.nn.functional.relu
+
+        r1 = self.layer_in(x)
+        r2 = relu(r1)
+        r3 = self.layer_act(r2)
+        r4 = relu(r3)
+        r5 = self.layer_out(r4)
+        
+        return r5.to(torch.float64)
+
+
+
+def select(s, epsilon):
+    # print("s type", type(s))
+    rnd = np.random.random()
+    b = rnd < epsilon
+    if b:
+        ret = env.action_space.sample()
+    else:
+        # print(type(s))
+        ts = ((s)).to(torch.float64)
+        ret = net(ts).argmax().item()
+    return ret.to(torch.float64) 
+
+
+# intialisations
+net = Net(observation_count=env.observation_space.shape[0],action_count=n_actions,dim2=dim_state)
+buffer = ReplayBuffer()
+
+optim = torch.optim.AdamW(params=net.parameters(),lr=LR)
+
+# add random
+# def random_sample():
+#     r = np.random.random
+#     z = Experience(r(), r(), r(), r(), False)
+#     return z 
+
+# for _ in range(24):
+#     buffer.append(random_sample())
+
+
+# net = Net(1,1,1)
+
+# t = torch.Tensor([2])
+# x = net.forward(t)
+# print("done")
+# exit()
 
 ### Training process
 
@@ -56,14 +163,46 @@ for i in EPISODES:
     # Reset enviroment data and initialize variables
     done, truncated = False, False
     state = env.reset()[0]
+    state = torch.tensor(state, dtype=torch.float64).to(torch.float64)
     total_episode_reward = 0.
     t = 0
     while not (done or truncated):
         # Take a random action
-        action = agent.forward(state)
+        # action = agent.forward(state)
+        action = select(s=state,epsilon=EPSILON)
+        print("adt",action.dtype)
 
         # Get next state and reward
         next_state, reward, done, truncated, _ = env.step(action)
+        next_state = next_state.to(torch.float64)
+        reward = reward.to(torch.float64)
+        # done = done.to(torch.float64)
+        trunxated = truncated.to(torch.float64)
+
+        # add z = (s_t, a_t, r_t, s_[t+1], d_t)
+        z = Experience(state, action,reward,next_state,done)
+        buffer.append(z)
+        # This part is very much like excercise session 3 solutions
+        if len(buffer) >= BATCH_SIZE:
+            sample_batch = buffer.sample(BATCH_SIZE)
+            for s in sample_batch:
+                print("sb", s.dtype)
+            states, actions, rewards, next_states, dones = sample_batch
+            # print("shapes", states.shape, actions.shape)
+            qt = net(states).gather(1, actions).squeeze()
+            with torch.no_grad():
+                # print("")
+                next_q = (net(next_states).max(1)[0]).to(torch.float64)
+
+                # tgt: r V r + gamma * max Q(s_next, a)
+                targets = (rewards + discount_factor * next_q * (1 - dones.to(int))).to(torch.float64)
+            
+            mse = torch.nn.functional.mse_loss(input = qt, target=targets)
+            optim.zero_grad()
+            mse.backward()
+            torch.nn.utils.clip_grad_norm(parameters= net.parameters(),max_norm=float(1))
+            optim.step()
+
 
         # Update episode reward
         total_episode_reward += reward
@@ -108,6 +247,7 @@ ax[1].set_ylabel('Total number of steps')
 ax[1].set_title('Total number of steps vs Episodes')
 ax[1].legend()
 ax[1].grid(alpha=0.3)
+plt.savefig("DQN_problem.png")
 plt.show()
 
 
