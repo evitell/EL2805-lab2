@@ -71,7 +71,7 @@ class Experience:
         self.done = done 
 
 class ReplayBuffer:
-    def __init__(self,max_len=1000):
+    def __init__(self,max_len=5000):
         self.buffer = []
         self.max_len = max_len
     
@@ -272,4 +272,7 @@ ax[1].grid(alpha=0.3)
 plt.savefig("DQN_problem.png")
 plt.show()
 
-
+# torch.save(net.layer_out, 'neural-network-1.pth')
+# torch.save(net.layer_in, 'neural-network-1.pth')
+# torch.save(net.layer_out, 'neural-network-1.pth')
+torch.save(net, 'neural-network-1.pth')
