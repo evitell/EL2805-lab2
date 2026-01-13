@@ -34,15 +34,25 @@ env = gym.make('LunarLander-v3')
 env.reset()
 
 # Parameters
-N_episodes = 100                             # Number of episodes
+
+# instructions suggest 100 <= N <= 1 000
+N_episodes = 100                             # Number of episodes (T_E)
 discount_factor = 0.95                       # Value of the discount factor (GAMMA)
 n_ep_running_average = 50                    # Running average of 50 episodes
 n_actions = env.action_space.n               # Number of available actions
 dim_state = len(env.observation_space.high)  # State dimensionality
 
-EPSILON = 0.1
-BATCH_SIZE = 32
-LR = 0.9
+EPSILON_MAX = .99 # 0.99 suggested in instructions
+EPSILON_MIN = .05 # 0.05 suggested in instructions
+Z = .9 * N_episodes
+
+# instructions suggest batch size N between 4 and 128
+BATCH_SIZE = 4 # training batch size (N)
+# LR = 3e-4 # pytorch tutorial chose 3e-4
+LR = .0001 # instructions suggest 10^(-4) to 10^(-3)
+
+# instructions suggest buffer size of 5 000-30 000
+BUFFER_SIZE = 15000 # buffer size (L)
 
 # We will use these variables to compute the average episodic reward and
 # the average number of steps per episode
@@ -71,11 +81,11 @@ class Experience:
         self.done = done 
 
 class ReplayBuffer:
-    def __init__(self,max_len=5000):
+    def __init__(self,max_len):
         self.buffer = []
         self.max_len = max_len
     
-    def append(self, elem):
+    def append(self, elem:Experience):
         assert (type(elem) is Experience)
         self.buffer.append(elem)
         if len(self.buffer) > self.max_len:
@@ -89,7 +99,7 @@ class ReplayBuffer:
     
     def sample(self, count):
         # print("sampling",len(self.buffer),count,self.max_len)
-        batch = np.random.choice(a=self.buffer,size=count,replace=False)
+        batch = np.random.choice(a=self.buffer, size=count, replace=False)
         # print("batch", batch)
         
         states_l = [x.state for x in batch]
@@ -110,24 +120,36 @@ class ReplayBuffer:
 class Net(torch.nn.Module):
     def __init__(self, observation_count, action_count, dim2):
         super().__init__()
-        self.layer_in = torch.nn.Linear(in_features=observation_count, out_features=dim2)
-        self.layer_act = torch.nn.Linear(in_features=dim2,out_features=dim2)
-        self.layer_out = torch.nn.Linear(in_features=dim2 ,out_features=action_count)
+        # self.layer_in = torch.nn.Linear(in_features=observation_count, out_features=dim2)
+        # self.layer_act = torch.nn.Linear(in_features=dim2,out_features=dim2)
+        # self.layer_out = torch.nn.Linear(in_features=dim2 ,out_features=action_count)
+
+        # https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html
+        self.layer = torch.nn.Sequential(
+            torch.nn.Linear(in_features=observation_count, out_features=dim2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=dim2,out_features=dim2),
+            torch.nn.ReLU(),
+            torch.nn.Linear(in_features=dim2 ,out_features=action_count)
+            
+        )
     
     def forward(self,x):
         # print("x type", type(x))
         # print("x.dtype", x.dtype)
         # x = torch.tensor(x,dtype=torch.float32)
         x = x.to(torch.float32)
-        relu = torch.nn.functional.relu
+        # relu = torch.nn.functional.relu
 
-        r1 = self.layer_in(x)
-        r2 = relu(r1)
-        r3 = self.layer_act(r2)
-        r4 = relu(r3)
-        r5 = self.layer_out(r4)
+        # r1 = self.layer_in(x)
+        # r2 = relu(r1)
+        # r3 = self.layer_act(r2)
+        # r4 = relu(r3)
+        # r5 = self.layer_out(r4)
+
+        r = self.layer(x)
         
-        return r5 #.to(torch.float32)
+        return r #.to(torch.float32)
 
 
 
@@ -137,37 +159,42 @@ def select(s, epsilon):
     b = rnd < epsilon
 
     if b:
-        ret = env.action_space.sample()
+        ret = torch.tensor([env.action_space.sample()])[0].item() # as suggested here: https://github.com/pytorch/tutorials/issues/474
     else:
 
         # print(type(s))
         if type(s) is np.ndarray:
-            ts = (torch.from_numpy(s))#.to(torch.float32)
+            # ts = (torch.from_numpy(s))#.to(torch.float32)
+            ts = torch.tensor([s],dtype=torch.float32)
         else:
             ts = ((s))#.to(torch.float32)
-
-        ret = net(ts).argmax().item()
+        with torch.no_grad():
+            # print("ts",ts)
+            ret = net(ts).argmax().item()
     # print(f"b={b} select returning {type(ret)}")
+
     return ret #.to(torch.float32) 
 
 
 # intialisations
-net = Net(observation_count=env.observation_space.shape[0],action_count=n_actions,dim2=dim_state)
-buffer = ReplayBuffer()
+net = Net(observation_count=dim_state,action_count=n_actions,dim2=128)
+target_net = Net(observation_count=env.observation_space.shape[0],action_count=n_actions,dim2=dim_state)
+buffer = ReplayBuffer(BUFFER_SIZE)
 
-optim = torch.optim.AdamW(params=net.parameters(),lr=LR)
+# optim = torch.optim.AdamW(params=net.parameters(),lr=LR)
+optim = torch.optim.Adam(params=net.parameters(),lr=LR)
 
 # add random
-# def random_sample():
-#     r = np.random.random
-#     z = Experience(r(), r(), r(), r(), False)
-#     return z 
+def random_sample()->Experience:
+    r = lambda x=None: np.random.random(x)
+    z = Experience(r(8), r(), r(), False, False)
+    return z 
 
-# for _ in range(24):
-#     buffer.append(random_sample())
+RND_COUNT = 2000*0
+for _ in range(RND_COUNT):
+    buffer.append(random_sample())
 
 
-# net = Net(1,1,1)
 
 # t = torch.Tensor([2])
 # x = net.forward(t)
@@ -184,17 +211,27 @@ for i in EPISODES:
     # Reset enviroment data and initialize variables
     done, truncated = False, False
     state = env.reset()[0]
+    # 
+    # 
     # state = torch.tensor(state, dtype=torch.float32).to(torch.float32)
     total_episode_reward = 0.
     t = 0
     while not (done or truncated):
         # Take a random action
         # action = agent.forward(state).
-        action = select(s=state,epsilon=EPSILON)
+        epsilon = max(
+            EPSILON_MIN,
+            EPSILON_MAX * np.pow((float(EPSILON_MIN)/float(EPSILON_MAX)),(float((i+1)-1 )/float(Z-1) ))
+
+        )
+        action = select(s=state,epsilon=epsilon)
         
 
         # Get next state and reward
         next_state, reward, done, truncated, _ = env.step(action)
+
+        # types [next_state, reward, done, truncated,]: [<class 'numpy.ndarray'>, <class 'numpy.float64'>, <class 'bool'>, <class 'bool'>]
+        # print("types [next_state, reward, done, truncated,]:" , [type(x) for x in [next_state, reward, done, truncated,]])
         # print(f"made one step, type(next_state)={type(next_state)}") # np.ndarray
         # next_state = next_state.to(torch.float32)
         # reward = reward.to(torch.float32)
@@ -204,6 +241,7 @@ for i in EPISODES:
         # add z = (s_t, a_t, r_t, s_[t+1], d_t)
         z = Experience(state, action,reward,next_state,done)
         buffer.append(z)
+        state = next_state
         # This part is very much like excercise session 3 solutions
         if len(buffer) >= BATCH_SIZE:
             sample_batch = buffer.sample(BATCH_SIZE)
@@ -214,15 +252,15 @@ for i in EPISODES:
             qt = net(states).gather(1, actions.to(torch.int32)).squeeze()
             with torch.no_grad():
                 # print("")
-                next_q = (net(next_states).max(1)[0]).to(torch.float32)
+                next_q = (net(next_states).max(1)[0]) #.to(torch.float32)
 
                 # tgt: r V r + gamma * max Q(s_next, a)
-                targets = (rewards + discount_factor * next_q * (1 - dones.to(int))).to(torch.float32)
+                targets = (rewards + discount_factor * next_q * (1 - dones.to(int))) #.to(torch.float32)
             
             mse = torch.nn.functional.mse_loss(input = qt, target=targets)
             optim.zero_grad()
             mse.backward()
-            torch.nn.utils.clip_grad_norm(parameters= net.parameters(),max_norm=float(1))
+            torch.nn.utils.clip_grad_norm_(parameters= net.parameters(),max_norm=float(1))
             optim.step()
 
 
@@ -275,4 +313,4 @@ plt.show()
 # torch.save(net.layer_out, 'neural-network-1.pth')
 # torch.save(net.layer_in, 'neural-network-1.pth')
 # torch.save(net.layer_out, 'neural-network-1.pth')
-torch.save(net, 'neural-network-1.pth')
+torch.save(net.layer, 'neural-network-1.pth')
