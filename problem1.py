@@ -44,15 +44,19 @@ dim_state = len(env.observation_space.high)  # State dimensionality
 
 EPSILON_MAX = .99 # 0.99 suggested in instructions
 EPSILON_MIN = .05 # 0.05 suggested in instructions
-Z = .9 * N_episodes
+Z = .95 * N_episodes
 
 # instructions suggest batch size N between 4 and 128
-BATCH_SIZE = 4 # training batch size (N)
+BATCH_SIZE = 128 # training batch size (N)
 # LR = 3e-4 # pytorch tutorial chose 3e-4
 LR = .0001 # instructions suggest 10^(-4) to 10^(-3)
 
+# period to update target (C)
+
 # instructions suggest buffer size of 5 000-30 000
-BUFFER_SIZE = 15000 # buffer size (L)
+BUFFER_SIZE = 30000 # buffer size (L)
+
+C = BUFFER_SIZE/BATCH_SIZE
 
 # We will use these variables to compute the average episodic reward and
 # the average number of steps per episode
@@ -127,8 +131,8 @@ class Net(torch.nn.Module):
         # https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html
         self.layer = torch.nn.Sequential(
             torch.nn.Linear(in_features=observation_count, out_features=dim2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(in_features=dim2,out_features=dim2),
+            # torch.nn.ReLU(),
+            # torch.nn.Linear(in_features=dim2,out_features=dim2),
             torch.nn.ReLU(),
             torch.nn.Linear(in_features=dim2 ,out_features=action_count)
             
@@ -138,7 +142,7 @@ class Net(torch.nn.Module):
         # print("x type", type(x))
         # print("x.dtype", x.dtype)
         # x = torch.tensor(x,dtype=torch.float32)
-        x = x.to(torch.float32)
+        # x = x.to(torch.float32)
         # relu = torch.nn.functional.relu
 
         # r1 = self.layer_in(x)
@@ -170,15 +174,17 @@ def select(s, epsilon):
             ts = ((s))#.to(torch.float32)
         with torch.no_grad():
             # print("ts",ts)
-            ret = net(ts).argmax().item()
+            nts = net(ts)
+            # ret = nts.argmax().item()
+            ret = int(torch.max(nts,dim=1)[1].item())
     # print(f"b={b} select returning {type(ret)}")
 
     return ret #.to(torch.float32) 
 
 
 # intialisations
-net = Net(observation_count=dim_state,action_count=n_actions,dim2=128)
-target_net = Net(observation_count=env.observation_space.shape[0],action_count=n_actions,dim2=dim_state)
+net = Net(observation_count=dim_state,action_count=n_actions,dim2=256)
+# target_net = Net(observation_count=env.observation_space.shape[0],action_count=n_actions,dim2=dim_state)
 buffer = ReplayBuffer(BUFFER_SIZE)
 
 # optim = torch.optim.AdamW(params=net.parameters(),lr=LR)
@@ -187,7 +193,7 @@ optim = torch.optim.Adam(params=net.parameters(),lr=LR)
 # add random
 def random_sample()->Experience:
     r = lambda x=None: np.random.random(x)
-    z = Experience(r(8), r(), r(), False, False)
+    z = Experience(r(dim_state), np.random.choice(a=n_actions), r(), r(dim_state), False)
     return z 
 
 RND_COUNT = 2000*0
@@ -239,9 +245,10 @@ for i in EPISODES:
         # trunxated = truncated.to(torch.float32)
 
         # add z = (s_t, a_t, r_t, s_[t+1], d_t)
-        z = Experience(state, action,reward,next_state,done)
+        z = Experience(state, action, reward, next_state,done)
+        # print( "types state, action, reward, next_state,done", [type(x) for x in [state, action, reward, next_state,done]])
         buffer.append(z)
-        state = next_state
+        # state = next_state
         # This part is very much like excercise session 3 solutions
         if len(buffer) >= BATCH_SIZE:
             sample_batch = buffer.sample(BATCH_SIZE)
@@ -260,7 +267,7 @@ for i in EPISODES:
             mse = torch.nn.functional.mse_loss(input = qt, target=targets)
             optim.zero_grad()
             mse.backward()
-            torch.nn.utils.clip_grad_norm_(parameters= net.parameters(),max_norm=float(1))
+            torch.nn.utils.clip_grad_norm_(parameters= net.parameters(),max_norm=float(2))
             optim.step()
 
 
