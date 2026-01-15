@@ -52,17 +52,14 @@ BATCH_SIZE = 128 # training batch size (N)
 # Learning rate (ALPHA)
 # LR = 3e-4 # pytorch tutorial chose 3e-4
 LR = 4*.0001 # instructions suggest 10^(-4) to 10^(-3)
-# LR = .01
 
-# period to update target (C)
 
 # instructions suggest buffer size of 5 000-30 000
 BUFFER_SIZE = 30000 # buffer size (L)
 
-
-# update frequency C ~ L/N
+# period to update target (C)
+# instructions say update frequency C ~ L/N
 C = BUFFER_SIZE/BATCH_SIZE
-# C = 10
 
 HIDDEN_DIM1 = 128
 HIDDEN_DIM2 = 64
@@ -74,7 +71,7 @@ episode_reward_list = []       # this list contains the total reward per episode
 episode_number_of_steps = []   # this list contains the number of steps per episode
 
 # Random agent initialization
-agent = RandomAgent(n_actions)
+# agent = RandomAgent(n_actions)
 
 # ReplayBuffer
 
@@ -116,7 +113,6 @@ class ReplayBuffer:
     def sample(self, count):
         # print("sampling",len(self.buffer),count,self.max_len)
         batch = np.random.choice(a=self.buffer, size=count, replace=False)
-        # print("batch", batch)
 
         states_l = [x.state for x in batch]
         actions_l = [x.action for x in batch]
@@ -146,12 +142,11 @@ class Net(torch.nn.Module):
             torch.nn.Linear(in_features=HIDDEN_DIM2,out_features=HIDDEN_DIM3),
             torch.nn.ReLU(),
             torch.nn.Linear(in_features=HIDDEN_DIM3 ,out_features=action_count)
-
         )
 
     def forward(self,x):
         r = self.layer(x)
-        return r #.to(torch.float32)
+        return r
 
 
 
@@ -171,8 +166,7 @@ def select(s, epsilon):
             torch_state = torch.tensor([s],dtype=torch.float32)
         else:
             torch_state = ((s))#.to(torch.float32)
-        with torch.no_grad():
-        # if True:
+        with torch.no_grad(): # as pytorch tutorial suggests
             # print("torch_state",torch_state)
             nts = net(torch_state)
             ret_f = (nts.argmax().item())
@@ -181,39 +175,22 @@ def select(s, epsilon):
             ret = int(ret_f)
     # print(f"b={b} select returning {type(ret)}")
 
-    return ret #.to(torch.float32)
+    return ret
 
 
 # intialisations
-net = Net(observation_count=dim_state,action_count=n_actions)
-target_net = Net(observation_count=dim_state,action_count=n_actions)
-# d = net.state_dict()
-# dt = target_net.state_dict()
-# for k in d:
-#     dt[k] = d[k]
+net = Net(observation_count=dim_state, action_count=n_actions)
+target_net = Net(observation_count=dim_state, action_count=n_actions)
+
 target_net.load_state_dict(net.state_dict())
 buffer = ReplayBuffer(BUFFER_SIZE)
 
 # optim = torch.optim.AdamW(params=net.parameters(),lr=LR)
 optim = torch.optim.Adam(params=net.parameters(),lr=LR)
 
-# add random
-def random_sample()->Experience:
-    r = lambda x=None: np.random.random(x)
-    z = Experience(r(dim_state), np.random.choice(a=n_actions), r(), r(dim_state), False)
-    return z
-
-RND_COUNT = 2000*0
-for _ in range(RND_COUNT):
-    buffer.append(random_sample())
 
 
-
-# t = torch.Tensor([2])
-# x = net.forward(t)
-# print("done")
-# exit()
-def summarise_net():
+def summarise_params():
     s = '\n'.join(
         [
             f"C={C}",
@@ -229,7 +206,7 @@ def summarise_net():
         ]
     )
     print(s)
-summarise_net()
+summarise_params()
 ### Training process
 
 # trange is an alternative to range in python, from the tqdm library
@@ -242,14 +219,14 @@ for i in EPISODES:
     # Reset enviroment data and initialize variables
     done, truncated = False, False
     state = env.reset()[0]
-    #
-    #
-    # state = torch.tensor(state, dtype=torch.float32).to(torch.float32)
+
     total_episode_reward = 0.
     t = 0
     while not (done or truncated):
         # Take a random action
         # action = agent.forward(state).
+
+        # The two different ways of setting epsilon that are suggested:
         # epsilon = max(
         #     EPSILON_MIN,
         #     EPSILON_MAX * np.pow((float(EPSILON_MIN)/float(EPSILON_MAX)),(float((i+1)-1 )/float(Z-1) ))
@@ -260,7 +237,7 @@ for i in EPISODES:
             EPSILON_MAX - ((float(EPSILON_MAX)-float(EPSILON_MIN))* (float((i+1)-1 )/float(Z-1) ))
         )
 
-        action = select(s=state,epsilon=epsilon)
+        action = select(s=state, epsilon=epsilon)
 
 
         # Get next state and reward
@@ -279,7 +256,7 @@ for i in EPISODES:
         # print( "types state, action, reward, next_state,done", [type(x) for x in [state, action, reward, next_state,done]])
         buffer.append(z)
         # update state
-        state = next_state
+        # state = next_state
         # This part is very much like excercise session 3 solutions
         if len(buffer) >= (BATCH_SIZE + 0):
             sample_batch = buffer.sample(BATCH_SIZE)
@@ -289,11 +266,11 @@ for i in EPISODES:
             # print("shapes", states.shape, actions.shape)
             qt = net(states).gather(1, actions.to(torch.int32)).squeeze()
             with torch.no_grad():
-                # print("")
-                next_q = (target_net(next_states).max(1)[0]) #.to(torch.float32)
+                # note! this is the only time target_net is used
+                next_q = (target_net(next_states).max(1)[0])
 
                 # tgt: r V r + gamma * max Q(s_next, a)
-                targets = (rewards + discount_factor * next_q * (1 - dones.to(int))) #.to(torch.float32)
+                targets = (rewards + discount_factor * next_q * (1 - dones.to(int)))
 
             mse = torch.nn.functional.mse_loss(input = qt, target=targets)
             optim.zero_grad()
@@ -304,22 +281,19 @@ for i in EPISODES:
             if n_steps_passed >= C:
                 n_steps_passed = 0
                 target_net.load_state_dict(net.state_dict())
-                # d = net.state_dict()
-                # dt = target_net.state_dict()
-                # for k in d:
-                #     dt[k] = d[k]
-
 
         # Update episode reward
         total_episode_reward += reward
 
         # Update state for next iteration
-        # state = next_state
+        state = next_state
         t+= 1
 
     # Append episode reward and total number of steps
     episode_reward_list.append(total_episode_reward)
     episode_number_of_steps.append(t)
+
+    # if the total reward is worse than the running average to many times, break the loop - nothing's getting better
     if total_episode_reward >= np.mean(episode_reward_list):
         worse_reward_count = 0
         max_reward = np.mean(episode_reward_list)
@@ -365,7 +339,5 @@ ax[1].grid(alpha=0.3)
 plt.savefig("DQN_problem.png")
 plt.show()
 
-# torch.save(net.layer_out, 'neural-network-1.pth')
-# torch.save(net.layer_in, 'neural-network-1.pth')
-# torch.save(net.layer_out, 'neural-network-1.pth')
+# save only the layer
 torch.save(net.layer, 'neural-network-1.pth')
