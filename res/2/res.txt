@@ -1,0 +1,1 @@
+Policy achieves an average total reward of 47.7 +/- 22.5 with confidence 95%.
