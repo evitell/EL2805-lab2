@@ -1,3 +1,3 @@
-#!/bin/sh
+#!/bin/sh -e
 
-python DQN_problem.py
+python problem1.py
